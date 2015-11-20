@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 
 #define PI 3.141592653589793
 
@@ -10,24 +11,29 @@
 double L1 = 10;
 double L2 = 10;
 int REFRESH_TIME = 30;
-FILE *porta;
-bool tem_arduino;
+
+/** --------------------------------------------- VARIÁVEIS GLOBAIS ----------------------------------------------- **/
+FILE *porta=NULL;
+bool tem_arduino=false;
+bool debug=false;
+void error_log(int codigo);
+FILE *arq;
+bool entrada_arquivo = false;
+
 /** ---------------------------------------------- DEFINICAO DE PAR ----------------------------------------------- **/
-class Par {
+class Servo {
 	public:
 
 		/**Variáveis*/
 		double x, y;
         double teta1, teta2;
-		double pos_valida;
-		double degrees;				//true -> graus (0,180)  false -> rad (-pi,pi)
+		bool pos_valida;
+		bool degrees;				//true -> graus (-180,180)  false -> rad (-pi,pi)
 
         /**Construtor para inicializar a classe*/
-        Par () {
+        Servo () {
 			x=20;
-			y=0;
-			teta1=0;
-			teta2=0;
+			y=teta1=teta2=0;
 			pos_valida=true;
 			degrees=false;
 		};
@@ -49,21 +55,27 @@ class Par {
 
 		void CinematicaInversa (bool arredondar){
 
-			/*Circulo Externo, a solução 'calculada' eh a posicao atual para nao se mexer*/
+			/*Circulo Externo, pontos inalcançáveis*/
 			if ( x*x + y*y > (L1+L2)*(L1+L2)){
-				fprintf (stderr, " *** Nao foi possivel encontrar uma solucao ***\n");
+				error_log(0);
 				pos_valida = false;
 				return;
 			}
 
-			pos_valida = true;
-
-			/*Calcule teta2 e se for negativo, temos que trocar o sinal para pegar a outra solução*/
-			if ( (teta2=AnguloLink()) < 0)
+			/*Calcule teta2 e se for negativo, temos que trocar o sinal para pegar a outra solução. Depois calcula teta1*/
+			if ( (teta2=acos((x*x + y*y -L1*L1 -L2*L2)/(2*L1*L2))) < 0)
 				teta2 *= -1;
+			teta1 = atan2( y*(L1 +L2*cos(-1*teta2))-x*L2*sin(-1*teta2) , x*(L1 +L2*cos(-1*teta2)) + y*L2*sin(-1*teta2) );
 
-			/*Calcule teta1*/
-			teta1 = AnguloBase();
+			/*Circulo interno, pontos ilegais com a montagem atual*/
+			if (teta1 < 0 || teta2<0){
+				error_log(1);
+				pos_valida = false;
+				return;
+			}
+
+			/*Se passar em todos os testes antes daqui, eh valida*/
+			pos_valida = true;
 
 			/*As funções calculam em radianos, temos que converter para graus*/
 			degrees = false;
@@ -76,11 +88,17 @@ class Par {
 			}
 		}
 
+		void CinematicaInversa (double x_new, double y_new, bool arredondar){
+			x = x_new;
+			y = y_new;
+			CinematicaDireta(arredondar);
+		}
+
 		void CinematicaDireta (bool arredondar){
 
-			/*Circulo Externo, a solução 'calculada' eh a posicao atual para nao se mexer*/
+			/*Circulo interno, pontos ilegais com a montagem atual*/
 			if (teta1 < 0 || teta2<0){
-				fprintf (stderr, " *** Nao foi possivel posicionar o sistema ***\n");
+				error_log(1);
 				pos_valida = false;
 				return;
 			}
@@ -91,20 +109,28 @@ class Par {
 			y = L1*sin(teta1) + L2*sin(teta1-teta2);
 			convert_degrees();
 
+			/*Circulo Externo, pontos inalcançáveis*/
+			if ( x*x + y*y > (L1+L2)*(L1+L2)){
+				error_log(0);
+				pos_valida = false;
+				return;
+			}
+
+			/*Se passar em todos os testes antes daqui, eh valida*/
+			pos_valida = true;
+
 			/*Se pedir para arredondar, arredonde*/
 			if (arredondar == true) {
 				x = round(10*x)/10;
-				y = round (10*y)/10;
+				y = round(10*y)/10;
 			}
 		}
 
-		double AnguloLink() {
-			return acos((x*x + y*y -L1*L1 -L2*L2)/(2*L1*L2));
-		};
-
-		double AnguloBase() {
-			return atan2( y*(L1 +L2*cos(-1*teta2))-x*L2*sin(-1*teta2) , x*(L1 +L2*cos(-1*teta2)) + y*L2*sin(-1*teta2) );
-		};
+		void CinematicaDireta (double teta1_new, double teta2_new, bool arredondar){
+			teta1 = teta1_new;
+			teta2 = teta2_new;
+			CinematicaDireta(arredondar);
+		}
 };
 
 /** -------------------------------------------------- FUNCOES ---------------------------------------------------- **/
@@ -114,27 +140,34 @@ void delay (int ms){
 	long ticks = ms * CLOCKS_PER_SEC/1000;
 	clock_t comeco, atual;
 
-	for (comeco = atual = clock(); atual - comeco < ticks ; atual = clock() )
-		;
+	for (comeco = atual = clock(); atual - comeco < ticks ; atual = clock() );
 }
 
-char* itoa(int i, char b[]){
-    char const digit[] = "0123456789";
-    char* p = b;
-    int shifter = i;
-    do{ //Move to where representation ends
-        ++p;
-        shifter = shifter/10;
-    }while(shifter);
-    *p = '\0';
-    do{ //Move back, inserting digits as u go
-        *--p = digit[i%10];
-        i = i/10;
-    }while(i);
-    return b;
+// Calcula os parametros a, b e c da reta em geometria analítica que passa pela posição inicial e final
+// a*(x) + b*(y) + c = 0
+// Depois calcula a distância mínima entre essa reta e um ponto x0, y0 definido
+double distancia_ponto_reta (Servo Ini, Servo Fin, double x0, double y0){
+
+	double delta_x = Fin.x - Ini.x;
+	double delta_y = Fin.y - Ini.y;
+
+	double a, b, c;
+
+	if (delta_x != 0){
+		a = -1*delta_y/delta_x;
+		b = 1;
+		c = -1*(Ini.y * delta_x - Ini.x * delta_y)/delta_x;
+	}
+	else{
+		a = 0;
+		b = 1;
+		c = 0;
+	}
+
+	return fabs(a*x0 + b*y0 + c)/sqrt(a*a + b*b);
 }
 
-void comunicaSerial ( Par p1 ){
+void comunicaSerial (Servo p1 ){
 	char str1[5], str2[5];
 
 	/*Se não tiver comunicação estabelecida, tenta abrir alguma das quatro portas*/
@@ -146,116 +179,36 @@ void comunicaSerial ( Par p1 ){
 		return;
 	tem_arduino = true;
 
-	itoa(( round(p1.teta1)), str1);
-	itoa(( round(p1.teta2)), str2);
-
+	snprintf(str1, sizeof(str1), "%d", (int) round(p1.teta1));
+	snprintf(str2, sizeof(str2), "%d", (int) round(p1.teta2));
 	fprintf (porta, "%s %s\n", str1, str2);
-//	printf ("Par de angulos (%s , %s) \n", str1, str2);
 	delay (REFRESH_TIME);
 }
 
-int signal (double a){
-	if (a != 0)
-		return a/abs(a);
-	return 1;
-}
+void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 
-void posiciona_sistema ( Par *PosFutura, Par *PosAtual, double velocidade ){
+	/*Se a distância entre a reta desejada e o ponto (-10,0) for menor que 10 ele está passando pela região ilegal
+	nesse caso, dê a mensagem de erro e não movimente os motores e não atualize a posição inicial*/
+	if (PosFutura->x<0 && distancia_ponto_reta(*PosAtual,*PosFutura,-L1,0) < L2){
+		error_log(200);
+		return;
+	}
 
 	//MOVIMENTAÇÃO
-	double d_teta1, d_teta2;				//Direrença de ângulo
-	double STEP1, STEP2;				//Deslocamento teta na janela atual
-	int dir1, dir2;						//Esquerda ou direita
+	double param, xi = PosAtual->x, yi = PosAtual->y;					//Deslocamento teta na janela atual
 
 	/*Converte para graus*/
 	PosAtual->convert_degrees();
 	PosFutura->convert_degrees();
 
-	/*Calcule o deslocamento para cada junta*/
-	d_teta1 = PosFutura->teta1 - PosAtual->teta1;
-	d_teta2 = PosFutura->teta2 - PosAtual->teta2;
-
-	/*Calcule o deslocamento por janela*/
-	if (d_teta1 == 0 || d_teta2==0){
-		STEP1 = STEP2 = velocidade;
-	}
-	else if (fabs(d_teta1) > fabs(d_teta2)){
-		STEP1 = velocidade;
-		STEP2 = velocidade * fabs(d_teta2/d_teta1);
-	}
-	else{
-		STEP2 = velocidade;
-		STEP1 = velocidade * fabs(d_teta1/d_teta2);
-	}
-
-
-	/*Verificando o sentido do deslocamento, dir=1 (crescente) e dir=-1 (decrescente)*/
-	dir1 = signal(d_teta1);
-	dir2 = signal(d_teta2);
-
-	/*Enquanto nao chegarmos à posição final (à menos de detalhes de resolução)*/
-	while (fabs(d_teta1) + abs(d_teta2) > 0.1){
-
-		printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
-//		printf ("Delta1: %.2lf \t Delta2: %.2lf\n", dir1*d_teta1, dir2*d_teta2);
-
-		//Se existe uma diferença em teta1, diminua um pouco
-		if (d_teta1 != 0)
-			PosAtual->teta1 += dir1*STEP1;
-
-		//Se existe uma diferença em teta2, diminua um pouco
-		if (d_teta2 != 0)
-			PosAtual->teta2 += dir2*STEP2;
-
-		//Se der um overshoot, a gente compensa
-		if ((PosAtual->teta1 - PosFutura->teta1)*dir1 >0)
-			PosAtual->teta1 = PosFutura->teta1;
-		if ((PosAtual->teta2 - PosFutura->teta2)*dir2 >0)
-			PosAtual->teta2 = PosFutura->teta2;
-
-		//Passa a nova posição desejada para o arduino
-		comunicaSerial (*PosAtual);
-
-		//Atualiza o delta
-		d_teta1 = PosFutura->teta1 - PosAtual->teta1;
-		d_teta2 = PosFutura->teta2 - PosAtual->teta2;
-	}
-	printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
-	PosAtual->x = PosFutura->x;
-	PosAtual->y = PosFutura->y;
-}
-
-void posiciona_sistema_pol ( Par *PosFutura, Par *PosAtual, double velocidade ){
-
-	//MOVIMENTAÇÃO
-	double d_teta1, d_teta2;				//Direrença de ângulo
-	double STEP1, STEP2, param, xi = PosAtual->x, yi = PosAtual->y;					//Deslocamento teta na janela atual
-	int dir1, dir2;							//Esquerda ou direita
-
-	/*Converte para graus*/
-	PosAtual->convert_degrees();
-	PosFutura->convert_degrees();
-
-	double teta1_ini=PosAtual->teta1;
-	double teta2_ini=PosAtual->teta2;
-
-	/*Calcule o deslocamento para cada junta*/
-	d_teta1 = PosFutura->teta1 - PosAtual->teta1;
-	d_teta2 = PosFutura->teta2 - PosAtual->teta2;
-
-	/*Verificando o sentido do deslocamento, dir=1 (crescente) e dir=-1 (decrescente)*/
-	dir1 = signal(d_teta1);
-	dir2 = signal(d_teta2);
-
-
-	int quant_passos = 50;
-
+	double dist = sqrt(pow((PosFutura->x - PosAtual->x), 2) + pow((PosFutura->y - PosAtual->y), 2));
+	int quant_passos = dist/0.1;		//10 cm -> 100 passos
 
 	/*Enquanto nao chegarmos à posição final (à menos de detalhes de resolução)*/
 	for (int i=1; i<=quant_passos; i++) {
 
-		printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
-//		printf ("Delta1: %.2lf \t Delta2: %.2lf\n", dir1*d_teta1, dir2*d_teta2);
+		if (debug == true)
+			printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
 
 		param = (-2*pow((1.0*i/quant_passos),3) + 3*pow(1.0*i/quant_passos, 2));
 		PosAtual->x = xi + param * (PosFutura->x - xi);
@@ -266,7 +219,61 @@ void posiciona_sistema_pol ( Par *PosFutura, Par *PosAtual, double velocidade ){
 		comunicaSerial (*PosAtual);
 	}
 
-	printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
 	PosAtual->x = PosFutura->x;
 	PosAtual->y = PosFutura->y;
+}
+
+void error_log (int codigo){
+
+	switch(codigo){
+		case 0:
+			fprintf (stderr, " *** Nao foi possivel encontrar uma solucao ***\n");
+			break;
+
+		case 1:
+			fprintf (stderr, " *** Nao foi possivel posicionar o sistema ***\n");
+			break;
+
+		case 100:
+			fprintf (stderr, " *** Nao foi possivel encontrar o arquivo fonte *** \n");
+			break;
+
+		case 101:
+			fprintf (stderr, " *** Diretiva nao conhecida *** \n");
+			break;
+
+		case 200:
+			fprintf (stderr, " *** Trajetoria passa por uma regiao ilegal *** \n");
+			break;
+	};
+}
+
+/*TRATAMENTO DE ARGUMENTOS PARA O PROGRAMA*/
+void tratamento_argumentos (int argc, char* argv[]){
+
+	/*Senão tiver argumentos, pode retornar*/
+	if (argc == 1)
+		return;
+
+	/*Para cada argumento, execute*/
+	for (int i=1; i<argc; i++){
+
+		if (*argv[i]=='-'){
+			if (!strcmp(argv[i], "-debug")){
+				debug = true;
+				continue;
+			}
+
+			error_log(101);
+			continue;
+		}
+
+		//Um argumento pode ser um endereço de arquivo fonte
+		if ((entrada_arquivo == false) && (arq=fopen(argv[i],"r")) != NULL)
+			entrada_arquivo = true;
+		else{
+			error_log (100);
+			exit(0);
+		}
+	}
 }

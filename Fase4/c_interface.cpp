@@ -1,26 +1,34 @@
 #include "c_bib.cpp"
 
-int main (){
+int main (int argc, char *argv[]){
 
-	Servo PosAtual;
-	Servo PosFutura;
-	double velocidade;		//0 - 1 (percentual da velocidade máxima)
+	Servo PosAtual, PosFutura;
+	double velocidade;					//0 - 1 (percentual da velocidade máxima)
 
-	porta = NULL;
-	tem_arduino = false; //Ainda nao sei se tem arduino na USB
+	/*Adicionando parâmetros para o arquivo*/
+	tratamento_argumentos (argc, argv);
 
+	if (entrada_arquivo == false)
+		arq = stdin;
+
+	/*LOOP DE FUNCIONAMENTO DO PROGRAMA. A SAÍDA É QUANDO ACABAR OS DADOS DO ARQUIVO OU O USUÁRIO INFORMAR CRTL+Z NA LINHA DE COMANDO*/
 	while (true){
 
-		/*Entrada de dados*/
-        printf ("\n --> Informe a proxima posicao: ");
-		scanf ("%lf %lf", &PosFutura.x, &PosFutura.y);
+		/*Acabando o arquivo, fecha o prog*/
+		if (feof(arq))
+			exit(0);
 
-		if(getchar()==' ')
+		if (entrada_arquivo == false)
+			printf ("\n --> Informe a proxima posicao: ");
+
+		fscanf (arq, "%lf %lf", &PosFutura.x, &PosFutura.y);
+
+		if(getc(arq)==' ')
 			scanf ("%lf", &velocidade);
 		else
 			velocidade = 1;
 
-		/*Calcule a cinemática inversa, pedindo Servoa arredondar e a direta sem pedir Servoa arredondar*/
+		/*Calcule a cinemática inversa, pedindo para arredondar e a direta sem pedir para arredondar*/
 		PosFutura.CinematicaInversa(true);
 		PosFutura.CinematicaDireta(false);
 
@@ -28,16 +36,14 @@ int main (){
 		if (PosFutura.pos_valida == false)
 			continue;
 
+		/*Posiciona o sistema*/
+		posiciona_sistema(&PosFutura, &PosAtual, velocidade);
+
 		/*Se não entrou naquele if, então a solucao eh viavel */
-		printf ("----------------------------------------\n");
-		printf ("Posicao Atual (x,y) = (%.2f, %.2f)\n", PosAtual.x, PosAtual.y);
-		printf ("Posicao Atual (teta1,teta2) = (%.2f, %.2f)\n\n", PosAtual.teta1, PosAtual.teta2);
-
-		printf ("Posicao futura (x,y) = (%.2f, %.2f)\n", PosFutura.x, PosFutura.y);
-		printf ("Posicao futura (teta1,teta2) = (%.2f, %.2f)\n", PosFutura.teta1, PosFutura.teta2);
-
-//		posiciona_sistema(&PosFutura, &PosAtual, velocidade);
-		posiciona_sistema_pol(&PosFutura, &PosAtual, velocidade);
+		//if (entrada_arquivo == false){
+			printf ("Posicao Atual\n\t(x,y)\t\t = (%.2f, %.2f)\n", PosFutura.x, PosFutura.y);
+			printf ("\t(teta1,teta2)\t = (%.2f, %.2f)\n\n", PosFutura.teta1, PosFutura.teta2);
+		//}
 	}
 }
 
