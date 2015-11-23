@@ -1,9 +1,13 @@
 /** ----------------------------------------------- BIBLIOTECAS --------------------------------------------------- **/
-#include <cmath>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <string.h>
+#include <cmath>							//sen(), cos(), acos(), atan2()
+#include <stdio.h>							//printf(), fprintf(), snprintf(), fscanf(), stdin, FILE
+#include <stdlib.h>							//exit()
+#include <time.h>							//clock()
+#include <string.h>							//strcmp()
+
+#ifdef _WIN32
+	#include "windows_serial.cpp"
+#endif
 
 #define PI 3.141592653589793
 
@@ -12,11 +16,20 @@ double L1 = 10;
 double L2 = 10;
 int REFRESH_TIME = 30;
 
+/** --------------------------------------- PROTOTIPOS DE FUNÇÕES E CLASSES --------------------------------------- **/
+class Servo;
+void tratamento_argumentos (int argc, char* argv[]);
+void entrada_dados (double *x, double *y, double *velocidade);
+bool valida_trajetoria (Servo PosAtual, Servo PosFutura);
+void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade );
+void comunicaSerial (Servo p1);
+void delay (int ms);
+void error_log (int codigo);
+
 /** --------------------------------------------- VARIÁVEIS GLOBAIS ----------------------------------------------- **/
 FILE *porta=NULL;
 bool tem_arduino=false;
 bool debug=false;
-void error_log(int codigo);
 FILE *arq;
 bool entrada_arquivo = false;
 
@@ -91,7 +104,8 @@ class Servo {
 		void CinematicaInversa (double x_new, double y_new, bool arredondar){
 			x = x_new;
 			y = y_new;
-			CinematicaDireta(arredondar);
+
+			CinematicaInversa(arredondar);
 		}
 
 		void CinematicaDireta (bool arredondar){
@@ -167,10 +181,12 @@ double distancia_ponto_reta (Servo Ini, Servo Fin, double x0, double y0){
 	return fabs(a*x0 + b*y0 + c)/sqrt(a*a + b*b);
 }
 
+/*Função em Linux para fazer a comunicação serial*/
+#ifdef __linux__
 void comunicaSerial (Servo p1 ){
 	char str1[5], str2[5];
 
-	/*Se não tiver comunicação estabelecida, tenta abrir alguma das quatro portas*/
+	/*Se não tiver comunicação estabelecida, tenta abrir alguma das portas*/
 	if ( tem_arduino==false &&
 		(porta = fopen("/dev/ttyACM0", "w+"))==NULL &&
 		(porta = fopen("/dev/ttyACM1", "w+"))==NULL &&
@@ -184,15 +200,33 @@ void comunicaSerial (Servo p1 ){
 	fprintf (porta, "%s %s\n", str1, str2);
 	delay (REFRESH_TIME);
 }
+#endif // __linux__
+
+/*Função em Windows para fazer a comunicação serial*/
+#ifdef _WIN32
+Serial *SP;
+void comunicaSerial (Servo p1 ){
+	char str1[5], str2[5];
+
+	/*Se não houver comunicação com um Arduíno, tente abrir*/
+	if(tem_arduino == false){
+		SP = new Serial("\\\\.\\COM10");    // adjust as needed
+	}
+
+	/*Se não funcionar, deixa pra lá*/
+	if (SP->IsConnected() == false)
+		return;
+
+	/*Se funcionar, faça a comunicação*/
+	tem_arduino = true;
+	snprintf(str1, sizeof(str1), "%d", (int) round(p1.teta1));
+	snprintf(str2, sizeof(str2), "%d", (int) round(p1.teta2));
+
+	delay (REFRESH_TIME);
+}
+#endif
 
 void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
-
-	/*Se a distância entre a reta desejada e o ponto (-10,0) for menor que 10 ele está passando pela região ilegal
-	nesse caso, dê a mensagem de erro e não movimente os motores e não atualize a posição inicial*/
-	if (PosFutura->x<0 && distancia_ponto_reta(*PosAtual,*PosFutura,-L1,0) < L2){
-		error_log(200);
-		return;
-	}
 
 	//MOVIMENTAÇÃO
 	double param, xi = PosAtual->x, yi = PosAtual->y;					//Deslocamento teta na janela atual
@@ -251,9 +285,11 @@ void error_log (int codigo){
 /*TRATAMENTO DE ARGUMENTOS PARA O PROGRAMA*/
 void tratamento_argumentos (int argc, char* argv[]){
 
-	/*Senão tiver argumentos, pode retornar*/
-	if (argc == 1)
+	/*Senão tiver argumentos, a entrada de dados eh pelo teclado e pode retornar*/
+	if (argc == 1){
+		arq = stdin;
 		return;
+	}
 
 	/*Para cada argumento, execute*/
 	for (int i=1; i<argc; i++){
@@ -269,11 +305,58 @@ void tratamento_argumentos (int argc, char* argv[]){
 		}
 
 		//Um argumento pode ser um endereço de arquivo fonte
-		if ((entrada_arquivo == false) && (arq=fopen(argv[i],"r")) != NULL)
+		if ((entrada_arquivo == false) && (arq=fopen(argv[i],"r")) != NULL){
 			entrada_arquivo = true;
+		}
 		else{
 			error_log (100);
 			exit(0);
 		}
 	}
+}
+
+void entrada_dados (double *x, double *y, double *velocidade){
+
+	if (entrada_arquivo == false)
+		printf ("\n --> Informe a proxima posicao: ");
+
+	fscanf (arq, "%lf %lf", x, y);
+
+	if(getc(arq)==' ')
+		scanf ("%lf", velocidade);
+	else
+		*velocidade = 1;
+}
+
+/*Se a distância entre a reta desejada e o ponto (-10,0) for menor que 10 ele está passando pela região ilegal
+nesse caso, dê a mensagem de erro e não movimente os motores e não atualize a posição inicial*/
+bool valida_trajetoria (Servo PosAtual, Servo PosFutura){
+
+	double delta_x = PosFutura.x - PosAtual.x;
+	double delta_y = PosFutura.y - PosAtual.y;
+
+	double a, b, c;
+
+	if (delta_x != 0){
+		a = -1*delta_y/delta_x;
+		b = 1;
+		c = -1*(PosAtual.y * delta_x - PosAtual.x * delta_y)/delta_x;
+	}
+	else{
+		a = 0;
+		b = 1;
+		c = 0;
+	}
+
+	//DIST = MENOR DISTÂNCIA DO PONTO (-10, 0) ATÉ A RETA QUE PASSA POR POSATUAL E POSFUTURA
+//	double dist = fabs(a*(x) + b*(y) c)/sqrt(a*a + b*b);
+	double dist = fabs(a*(-1*L1) + c)/sqrt(a*a + b*b);
+
+	//SE PASSAR MUITO PERTO DO CIRCULO DE RAIO L2 LOCALIZADO NO PONTO (-L1, 0), SIGNIFICA QUE
+	// A TRAJETÓRIA ESTÁ PASSANDO PELA REGIÃO PROIBIDA
+	if (PosFutura.x<0 && dist < L2){
+		error_log(200);
+		return false;
+	}
+	return true;
 }

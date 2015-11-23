@@ -2,48 +2,46 @@
 
 int main (int argc, char *argv[]){
 
-	Servo PosAtual, PosFutura;
-	double velocidade;					//0 - 1 (percentual da velocidade máxima)
+	Servo PosAtual, PosFutura;				// VARIÁVEIS PARA SEGURAR AS EXTREMIDADES DO MOVIMENTO
+	double x, y, velocidade;				// VARIÁVEIS PARA SEGURAR A ENTRADA DE DADOS
 
-	/*Adicionando parâmetros para o arquivo*/
+	/*TRATAMENTO DE ARGUMENTOS RECEBIDOS PELA LINHA DE COMANDO*/
 	tratamento_argumentos (argc, argv);
 
-	if (entrada_arquivo == false)
-		arq = stdin;
-
 	/*LOOP DE FUNCIONAMENTO DO PROGRAMA. A SAÍDA É QUANDO ACABAR OS DADOS DO ARQUIVO OU O USUÁRIO INFORMAR CRTL+Z NA LINHA DE COMANDO*/
-	while (true){
+	while (!feof(arq)) {
 
-		/*Acabando o arquivo, fecha o prog*/
-		if (feof(arq))
-			exit(0);
+		/*LÊ UMA INSTRUÇÃO*/
+		entrada_dados(&x, &y, &velocidade);
 
-		if (entrada_arquivo == false)
-			printf ("\n --> Informe a proxima posicao: ");
+		/*SE DER ALGUM BUG, ESSA INFORMAÇÃO EH IMPORTANTE*/
+		if (debug == true){
+			printf ("\n------------------------------ Entrada de dados ------------------------------\n");
+			printf ("x = %2.2lf\ty = %2.2lf\tvel = %2.2lf\n", x, y, velocidade);
+			getchar();
+		}
 
-		fscanf (arq, "%lf %lf", &PosFutura.x, &PosFutura.y);
+		/*CALCULE A CINEMÁTICA INVERSA, PEDINDO PARA ARREDONDAR*/
+		PosFutura.CinematicaInversa(x, y, true);
 
-		if(getc(arq)==' ')
-			scanf ("%lf", &velocidade);
-		else
-			velocidade = 1;
-
-		/*Calcule a cinemática inversa, pedindo para arredondar e a direta sem pedir para arredondar*/
-		PosFutura.CinematicaInversa(true);
-		PosFutura.CinematicaDireta(false);
-
-		/*Se a posição calculada não for realizável ignore o comando*/
+		/*SE A POSIÇÃO CALCULADA NÃO FOR LEGAL, IGNORE ESSA INSTRUÇÃO*/
 		if (PosFutura.pos_valida == false)
 			continue;
 
-		/*Posiciona o sistema*/
-		posiciona_sistema(&PosFutura, &PosAtual, velocidade);
+		/*CALCULA A CINEMÁTICA DIRETA, SEM PEDIR PARA ARREDONDAR*/
+		PosFutura.CinematicaDireta(false);
 
-		/*Se não entrou naquele if, então a solucao eh viavel */
-		//if (entrada_arquivo == false){
-			printf ("Posicao Atual\n\t(x,y)\t\t = (%.2f, %.2f)\n", PosFutura.x, PosFutura.y);
-			printf ("\t(teta1,teta2)\t = (%.2f, %.2f)\n\n", PosFutura.teta1, PosFutura.teta2);
-		//}
+		/*VALIDA A TRAJETÓRIA ANTES DE MOVIMENTAR*/
+		if (valida_trajetoria(PosAtual, PosFutura) == false)
+			continue;
+
+		/*ANTES DE MOVIMENTAR, INFORMAR O QUE QUE ESTÁ ROLANDO*/
+		printf ("---------- Movimento ----------\n");
+		printf ("\t(x,y)\t\t= (%5.2lf, %5.2lf)\t->\t(x,y)\t\t = (%5.2lf, %5.2lf) \n", PosAtual.x, PosAtual.y, PosFutura.x, PosFutura.y);
+		printf ("\t(teta1,teta2)\t= (%5.2lf, %5.2lf)\t->\t(teta1,teta2)\t = (%5.2lf, %5.2lf)\n\n", PosAtual.teta1, PosAtual.teta2, PosFutura.teta1, PosFutura.teta2);
+
+		/*MOVIMENTA O SISTEMA DA POSIÇÃO INICIAL PARA A POSIÇÃO FINAL*/
+		if (PosFutura.pos_valida == true)
+			posiciona_sistema(&PosFutura, &PosAtual, velocidade);
 	}
 }
-
