@@ -28,9 +28,12 @@ void error_log (int codigo);
 
 /** --------------------------------------------- VARIÁVEIS GLOBAIS ----------------------------------------------- **/
 FILE *porta=NULL;
+FILE *arq=NULL;
+FILE *dump_file=NULL;
+
 bool tem_arduino=false;
 bool debug=false;
-FILE *arq;
+bool dump;
 bool entrada_arquivo = false;
 
 /** ---------------------------------------------- DEFINICAO DE PAR ----------------------------------------------- **/
@@ -157,30 +160,6 @@ void delay (int ms){
 	for (comeco = atual = clock(); atual - comeco < ticks ; atual = clock() );
 }
 
-// Calcula os parametros a, b e c da reta em geometria analítica que passa pela posição inicial e final
-// a*(x) + b*(y) + c = 0
-// Depois calcula a distância mínima entre essa reta e um ponto x0, y0 definido
-double distancia_ponto_reta (Servo Ini, Servo Fin, double x0, double y0){
-
-	double delta_x = Fin.x - Ini.x;
-	double delta_y = Fin.y - Ini.y;
-
-	double a, b, c;
-
-	if (delta_x != 0){
-		a = -1*delta_y/delta_x;
-		b = 1;
-		c = -1*(Ini.y * delta_x - Ini.x * delta_y)/delta_x;
-	}
-	else{
-		a = 0;
-		b = 1;
-		c = 0;
-	}
-
-	return fabs(a*x0 + b*y0 + c)/sqrt(a*a + b*b);
-}
-
 /*Função em Linux para fazer a comunicação serial*/
 #ifdef __linux__
 void comunicaSerial (Servo p1 ){
@@ -229,24 +208,27 @@ void comunicaSerial (Servo p1 ){
 void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 
 	//MOVIMENTAÇÃO
-	double param, xi = PosAtual->x, yi = PosAtual->y;					//Deslocamento teta na janela atual
+	double xi = PosAtual->x, yi = PosAtual->y;				//Segurando a posicao inicial
+	double dx = PosFutura->x - xi, dy = PosFutura->y - yi;	//Segurando o deltax e deltay
+	int quant_passos = sqrt(dx*dx + dy*dy)/0.1;					//10 cm -> 100 passos
 
 	/*Converte para graus*/
 	PosAtual->convert_degrees();
 	PosFutura->convert_degrees();
 
-	double dist = sqrt(pow((PosFutura->x - PosAtual->x), 2) + pow((PosFutura->y - PosAtual->y), 2));
-	int quant_passos = dist/0.1;		//10 cm -> 100 passos
-
-	/*Enquanto nao chegarmos à posição final (à menos de detalhes de resolução)*/
+	/*Enquanto nao chegarmos à posição final*/
 	for (int i=1; i<=quant_passos; i++) {
 
-		if (debug == true)
-			printf (" -> Angulo atual (%.2lf %.2lf)\n", PosAtual->teta1, PosAtual->teta2);
+		if (dump == true)
+			fprintf (dump_file, "%5.2lf\t%5.2lf\t%5.2lf\t%5.2lf\t\n", PosAtual->teta1, PosAtual->teta2, PosAtual->x, PosAtual->y);
 
-		param = (-2*pow((1.0*i/quant_passos),3) + 3*pow(1.0*i/quant_passos, 2));
-		PosAtual->x = xi + param * (PosFutura->x - xi);
-		PosAtual->y = yi + param * (PosFutura->y - yi);
+		if (debug == true)
+			printf (" -> Angulo atual (%5.2lf %5.2lf)\n", PosAtual->teta1, PosAtual->teta2);
+
+		PosAtual->x = xi + dx*i/quant_passos;
+		PosAtual->y = yi + dy*i/quant_passos;
+
+		//Dado o novo (x,y), calcule o (teta1, teta2)
 		PosAtual->CinematicaInversa(false);
 
 		//Passa a nova posição desejada para o arduino
@@ -300,6 +282,12 @@ void tratamento_argumentos (int argc, char* argv[]){
 				continue;
 			}
 
+			if (!strcmp(argv[i], "-dump")){
+				dump = true;
+				dump_file = fopen("dump.txt", "w+");
+				continue;
+			}
+
 			error_log(101);
 			continue;
 		}
@@ -328,8 +316,14 @@ void entrada_dados (double *x, double *y, double *velocidade){
 		*velocidade = 1;
 }
 
-/*Se a distância entre a reta desejada e o ponto (-10,0) for menor que 10 ele está passando pela região ilegal
-nesse caso, dê a mensagem de erro e não movimente os motores e não atualize a posição inicial*/
+/*
+Calcula os parametros a, b e c da reta em geometria analítica que passa pela posição inicial e final
+a*(x) + b*(y) + c = 0
+Depois calcula a distância mínima entre essa reta e um ponto x0, y0 definido como (-L1, 0)
+
+Se a distância entre a reta desejada e o ponto for menor que 10 ele está passando pela região ilegal
+nesse caso, dê a mensagem de erro e não movimente os motores e não atualize a posição inicial
+*/
 bool valida_trajetoria (Servo PosAtual, Servo PosFutura){
 
 	double delta_x = PosFutura.x - PosAtual.x;
