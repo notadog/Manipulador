@@ -2,11 +2,11 @@
 
 int main (int argc, char *argv[]){
 
-	Servo PosAtual, PosFutura;				// VARIÁVEIS PARA SEGURAR AS EXTREMIDADES DO MOVIMENTO
-	double x, y, velocidade;				// VARIÁVEIS PARA SEGURAR A ENTRADA DE DADOS
-
 	/*TRATAMENTO DE ARGUMENTOS RECEBIDOS PELA LINHA DE COMANDO*/
 	tratamento_argumentos (argc, argv);
+
+	Servo PosAtual, PosFutura;				// VARIÁVEIS PARA SEGURAR AS EXTREMIDADES DO MOVIMENTO
+	double x, y, velocidade;				// VARIÁVEIS PARA SEGURAR A ENTRADA DE DADOS
 
 	/*LOOP DE FUNCIONAMENTO DO PROGRAMA. A SAÍDA É QUANDO ACABAR OS DADOS DO ARQUIVO OU O USUÁRIO INFORMAR CRTL+Z NA LINHA DE COMANDO*/
 	while (!feof(arq)) {

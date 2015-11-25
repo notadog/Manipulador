@@ -11,11 +11,6 @@
 
 #define PI 3.141592653589793
 
-/** ------------------------------------------- PARÂMETROS DO PROJETO --------------------------------------------- **/
-double L1 = 10;
-double L2 = 10;
-int REFRESH_TIME = 30;
-
 /** --------------------------------------- PROTOTIPOS DE FUNÇÕES E CLASSES --------------------------------------- **/
 class Servo;
 void tratamento_argumentos (int argc, char* argv[]);
@@ -26,15 +21,8 @@ void comunicaSerial (Servo p1);
 void delay (int ms);
 void error_log (int codigo);
 
-/** --------------------------------------------- VARIÁVEIS GLOBAIS ----------------------------------------------- **/
-FILE *porta=NULL;
-FILE *arq=NULL;
-FILE *dump_file=NULL;
-
-bool tem_arduino=false;
-bool debug=false;
-bool dump;
-bool entrada_arquivo = false;
+double L1 = 10;
+double L2 = 10;
 
 /** ---------------------------------------------- DEFINICAO DE PAR ----------------------------------------------- **/
 class Servo {
@@ -150,6 +138,19 @@ class Servo {
 		}
 };
 
+/** ------------------------------------------- PARÂMETROS DO PROJETO --------------------------------------------- **/
+int REFRESH_TIME = 30;
+
+/** --------------------------------------------- VARIÁVEIS GLOBAIS ----------------------------------------------- **/
+FILE *porta=NULL;
+FILE *arq=NULL;
+FILE *dump_file=NULL;
+
+bool tem_arduino=false;
+bool debug=false;
+bool dump=false;
+bool entrada_arquivo=false;
+
 /** -------------------------------------------------- FUNCOES ---------------------------------------------------- **/
 
 void delay (int ms){
@@ -210,7 +211,7 @@ void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 	//MOVIMENTAÇÃO
 	double xi = PosAtual->x, yi = PosAtual->y;				//Segurando a posicao inicial
 	double dx = PosFutura->x - xi, dy = PosFutura->y - yi;	//Segurando o deltax e deltay
-	int quant_passos = sqrt(dx*dx + dy*dy)/0.1;					//10 cm -> 100 passos
+	int quant_passos = sqrt(dx*dx + dy*dy)/0.025;					//10 cm -> 100 passos
 
 	/*Converte para graus*/
 	PosAtual->convert_degrees();
@@ -229,7 +230,7 @@ void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 		PosAtual->y = yi + dy*i/quant_passos;
 
 		//Dado o novo (x,y), calcule o (teta1, teta2)
-		PosAtual->CinematicaInversa(false);
+		PosAtual->CinematicaInversa(true);
 
 		//Passa a nova posição desejada para o arduino
 		comunicaSerial (*PosAtual);
@@ -239,6 +240,11 @@ void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 	PosAtual->y = PosFutura->y;
 }
 
+/*Função que dado um código de erro, manda para o stderr mais informações sobre o erro detectado
+	  0- 99 -> erros relacionados à posicionar o servo
+	100-199 -> erros relacionados à CLI
+	200-299 -> erros relacionados à trajetória
+*/
 void error_log (int codigo){
 
 	switch(codigo){
@@ -255,11 +261,15 @@ void error_log (int codigo){
 			break;
 
 		case 101:
-			fprintf (stderr, " *** Diretiva nao conhecida *** \n");
+			fprintf (stderr, " *** Diretiva nao conhecida ***\n");
+			break;
+
+		case 102:
+			fprintf (stderr, "*** Apenas um arquivo fonte por favor ***\n");
 			break;
 
 		case 200:
-			fprintf (stderr, " *** Trajetoria passa por uma regiao ilegal *** \n");
+			fprintf (stderr, " *** Trajetoria passa por uma regiao ilegal ***\n");
 			break;
 	};
 }
@@ -277,12 +287,12 @@ void tratamento_argumentos (int argc, char* argv[]){
 	for (int i=1; i<argc; i++){
 
 		if (*argv[i]=='-'){
-			if (!strcmp(argv[i], "-debug")){
+			if (!strcmp(argv[i], "-debug")){									/*Programa roda avisando para o usuário as diversas informações relevantes*/
 				debug = true;
 				continue;
 			}
 
-			if (!strcmp(argv[i], "-dump")){
+			if (!strcmp(argv[i], "-dump")){										/*Programa roda e coloca todos os valores calculados relevantes em dump.txt, para ser plottado*/
 				dump = true;
 				dump_file = fopen("dump.txt", "w+");
 				continue;
@@ -292,15 +302,21 @@ void tratamento_argumentos (int argc, char* argv[]){
 			continue;
 		}
 
-		//Um argumento pode ser um endereço de arquivo fonte
-		if ((entrada_arquivo == false) && (arq=fopen(argv[i],"r")) != NULL){
+		//Um argumento sem - soh pode ser um endereço de arquivo fonte
+		if ((entrada_arquivo == false) && (arq=fopen(argv[i],"r")) != NULL)
 			entrada_arquivo = true;
-		}
-		else{
+		else if (entrada_arquivo == false){										/*Não consegui abrir, arquivo não encontrado*/
 			error_log (100);
+			exit(0);
+		}																		/*Se tem arquivo aberto e tentou abrir um segundo, informe que um arquivo por vez*/
+		else{
+			error_log (102);
 			exit(0);
 		}
 	}
+
+	if(entrada_arquivo == false)
+		arq = stdin;
 }
 
 void entrada_dados (double *x, double *y, double *velocidade){
@@ -346,9 +362,15 @@ bool valida_trajetoria (Servo PosAtual, Servo PosFutura){
 //	double dist = fabs(a*(x) + b*(y) c)/sqrt(a*a + b*b);
 	double dist = fabs(a*(-1*L1) + c)/sqrt(a*a + b*b);
 
+//	if (debug == true){
+		printf ("\n---------- Parametros da linha ----------\n");
+		printf ("a = %5.2lf\tb = %5.2lf\tb = %5.2lf\n", a, b, c);
+		printf ("Dist: %5.2lf\n", dist);
+//	}
+
 	//SE PASSAR MUITO PERTO DO CIRCULO DE RAIO L2 LOCALIZADO NO PONTO (-L1, 0), SIGNIFICA QUE
 	// A TRAJETÓRIA ESTÁ PASSANDO PELA REGIÃO PROIBIDA
-	if (PosFutura.x<0 && dist < L2){
+	if (PosFutura.x<=0 && dist < L2){
 		error_log(200);
 		return false;
 	}
