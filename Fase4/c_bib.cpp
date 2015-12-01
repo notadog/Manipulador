@@ -4,7 +4,6 @@
 #include <stdlib.h>							//exit()
 #include <time.h>							//clock()
 #include <string.h>							//strcmp()
-
 #ifdef _WIN32
 	#include "windows_serial.cpp"
 #endif
@@ -67,8 +66,7 @@ class Servo {
 			}
 
 			/*Calcule teta2 e se for negativo, temos que trocar o sinal para pegar a outra solução. Depois calcula teta1*/
-			if ( (teta2=acos((x*x + y*y -L1*L1 -L2*L2)/(2*L1*L2))) < 0)
-				teta2 *= -1;
+			teta2 = fabs(acos((x*x + y*y -L1*L1 -L2*L2)/(2*L1*L2)));
 			teta1 = atan2( y*(L1 +L2*cos(-1*teta2))-x*L2*sin(-1*teta2) , x*(L1 +L2*cos(-1*teta2)) + y*L2*sin(-1*teta2) );
 
 			/*Circulo interno, pontos ilegais com a montagem atual*/
@@ -177,7 +175,7 @@ void comunicaSerial (Servo p1 ){
 
 	snprintf(str1, sizeof(str1), "%d", (int) round(p1.teta1));
 	snprintf(str2, sizeof(str2), "%d", (int) round(p1.teta2));
-	fprintf (porta, "%s %s\n", str1, str2);
+	fprintf (porta, " %s\n %s\n", str1, str2);
 	delay (REFRESH_TIME);
 }
 #endif // __linux__
@@ -211,7 +209,7 @@ void posiciona_sistema ( Servo *PosFutura, Servo *PosAtual, double velocidade ){
 	//MOVIMENTAÇÃO
 	double xi = PosAtual->x, yi = PosAtual->y;				//Segurando a posicao inicial
 	double dx = PosFutura->x - xi, dy = PosFutura->y - yi;	//Segurando o deltax e deltay
-	int quant_passos = sqrt(dx*dx + dy*dy)/0.025;					//10 cm -> 100 passos
+	int quant_passos = sqrt(dx*dx + dy*dy)/0.05;					//10 cm -> 100 passos
 
 	/*Converte para graus*/
 	PosAtual->convert_degrees();
@@ -362,11 +360,11 @@ bool valida_trajetoria (Servo PosAtual, Servo PosFutura){
 //	double dist = fabs(a*(x) + b*(y) c)/sqrt(a*a + b*b);
 	double dist = fabs(a*(-1*L1) + c)/sqrt(a*a + b*b);
 
-//	if (debug == true){
+	if (debug == true){
 		printf ("\n---------- Parametros da linha ----------\n");
 		printf ("a = %5.2lf\tb = %5.2lf\tb = %5.2lf\n", a, b, c);
 		printf ("Dist: %5.2lf\n", dist);
-//	}
+	}
 
 	//SE PASSAR MUITO PERTO DO CIRCULO DE RAIO L2 LOCALIZADO NO PONTO (-L1, 0), SIGNIFICA QUE
 	// A TRAJETÓRIA ESTÁ PASSANDO PELA REGIÃO PROIBIDA
@@ -375,4 +373,62 @@ bool valida_trajetoria (Servo PosAtual, Servo PosFutura){
 		return false;
 	}
 	return true;
+}
+
+/*
+1) Calcula uma trajetória r(t) = (x(t),y(t)) que leva da posicao atual ateh a posicao final
+
+x(t) = x_i + delta_x * t ; t pertence a [0,1]
+y(t) = y_i + delta_y * t ; t pertence a [0,1]
+
+2) Dado um ponto P0 = (x0,y0) = (-10,0)
+
+3)Defino a funcao:
+
+d_quad = |P_atual - P0| ^2 = (P_atual.x -x0)^2 + (P_atual.y - y0)^2 ; t pertence a [0,1]
+
+4) Encontro o ponto de mínimo da função e retorno true se min{d_quad} < 100
+
+---- mat
+Como P_atual eh (t), d_quad eh funcao de t:
+
+d_quad(t) = (x(t) -x0)^2 + (y(t) - y0)^2
+d_quad(t) = (x_i + delta_x*t -x0)^2 + (y_i + delta_y*t - y0)^2
+d_quad(t) = {(x_i -x0)^2 + (y_i -y0)^2} + t * 2{delta_x*(x_i - x0) + delta_y(y_i - y0)} + t^2 * {delta_x^2 + delta_y^2}
+
+Derivando e igualando a zero para encontrar os pontos críticos:
+
+dot(d_quad(t_crit)) = 0 -> delta_x*(x_i - x0) + delta_y(y_i - y0) = -t_crit * {delta_x^2 + delta_y^2}
+dot(d_quad(t_crit)) = 0 -> delta_x*(x_i - x0) + delta_y(y_i - y0) = -t_crit * {delta_x^2 + delta_y^2}
+
+t_crit = - [delta_x*(x_i - x0) + delta_y(y_i - y0)] / [delta_x^2 + delta_y^2]
+
+
+*/
+bool valida_trajetoria_2 (Servo PosAtual, Servo PosFutura){
+
+	double delta_x = PosFutura.x - PosAtual.x;
+	double delta_y = PosFutura.y - PosAtual.y;
+
+	double t_crit = -1*(delta_x*(PosAtual.x + 10) + delta_y*PosAtual.y)/(pow(delta_x,2) + pow(delta_y, 2));
+	double d_quad_crit;
+
+	double x_i = PosAtual.x;
+	double y_i = PosAtual.y;
+	double x0 = -10;
+	double y0 = 0;
+
+	double d_quad_ini = pow(x_i -x0, 2) + pow(y_i -y0, 2);
+	double d_quad_fim = pow(x_i -x0, 2) + pow(y_i -y0, 2) + 2*(delta_x*(x_i - x0) + delta_y*(y_i - y0)) + pow(delta_x,2) + pow(delta_y, 2);
+
+	/*Ponto crítico dentro da trajetória*/
+	if ((t_crit > 0) and (t_crit < 1))
+		d_quad_crit = pow(x_i -x0, 2) + pow(y_i -y0, 2) + t_crit * 2*(delta_x*(x_i - x0) + delta_y*(y_i - y0)) + t_crit*t_crit * (pow(delta_x,2) + pow(delta_y, 2));
+
+	/*Ponto crítico fora da trajetória*/
+	else
+		d_quad_crit = INFINITY;
+
+	/*Se a menor dessas três distâncias for algo maior que 100, retorne true e caso contrário retorne falso*/
+	return fmin (d_quad_ini, fmin(d_quad_fim, d_quad_crit)) - 100 > 0;
 }

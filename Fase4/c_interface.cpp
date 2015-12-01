@@ -36,9 +36,11 @@ int main (int argc, char *argv[]){
 			continue;
 
 		/*ANTES DE MOVIMENTAR, INFORMAR O QUE QUE ESTÁ ROLANDO*/
-		printf ("---------- Movimento ----------\n");
-		printf ("\t(x,y)\t\t= (%5.2lf, %5.2lf)\t->\t(x,y)\t\t = (%5.2lf, %5.2lf) \n", PosAtual.x, PosAtual.y, PosFutura.x, PosFutura.y);
-		printf ("\t(teta1,teta2)\t= (%5.2lf, %5.2lf)\t->\t(teta1,teta2)\t = (%5.2lf, %5.2lf)\n\n", PosAtual.teta1, PosAtual.teta2, PosFutura.teta1, PosFutura.teta2);
+		if (entrada_arquivo == false){
+			printf ("---------- Movimento ----------\n");
+			printf ("\t(x,y)\t\t= (%5.2lf, %5.2lf)\t->\t(x,y)\t\t = (%5.2lf, %5.2lf) \n", PosAtual.x, PosAtual.y, PosFutura.x, PosFutura.y);
+			printf ("\t(teta1,teta2)\t= (%5.2lf, %5.2lf)\t->\t(teta1,teta2)\t = (%5.2lf, %5.2lf)\n\n", PosAtual.teta1, PosAtual.teta2, PosFutura.teta1, PosFutura.teta2);
+		}
 
 		/*MOVIMENTA O SISTEMA DA POSIÇÃO INICIAL PARA A POSIÇÃO FINAL*/
 		if (PosFutura.pos_valida == true)
